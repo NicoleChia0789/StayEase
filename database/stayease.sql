@@ -18,14 +18,14 @@ USE stayease;
 
 SET FOREIGN_KEY_CHECKS = 0;
 DROP VIEW  IF EXISTS v_homestay_ratings;
-DROP TABLE IF EXISTS reviews, payments, bookings, blocked_dates, pricing_rules,
+DROP TABLE IF EXISTS reviews, payments, booking_drafts, bookings, blocked_dates, pricing_rules,
                      promo_codes, homestay_images, homestay_tags, tags,
                      homestays, users;
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- ---------------------------------------------------------------------
 -- 1. users                                        (Member A - Customer)
---    One table for both roles. role: User = customer, Staff = staff/admin
+--    One table for both roles. role: User = customer, Staff
 -- ---------------------------------------------------------------------
 CREATE TABLE users (
   user_id        INT UNSIGNED  NOT NULL AUTO_INCREMENT,
@@ -38,15 +38,15 @@ CREATE TABLE users (
   created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (user_id),
-  UNIQUE KEY uq_users_email (email)
+  UNIQUE KEY uq_users_email (email) --确保同一个邮箱不能注册多次。
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------
--- 2. homestays                                    (Member A - Homestay)
+-- 2. homestays                    住宿的主要资料 (Member A - Homestay)
 -- ---------------------------------------------------------------------
 CREATE TABLE homestays (
   homestay_id  INT UNSIGNED  NOT NULL AUTO_INCREMENT,
-  name         VARCHAR(100)  NOT NULL,
+  name         VARCHAR(100)  NOT NULL,            -- e.g. "The Tides Langkawi" (used by filter)
   state        VARCHAR(50)   NOT NULL,            -- e.g. Kedah, Penang  (used by filter + recommendation)
   city         VARCHAR(50)   NOT NULL,
   address      VARCHAR(255)  NOT NULL,
@@ -61,8 +61,8 @@ CREATE TABLE homestays (
   PRIMARY KEY (homestay_id),
   KEY idx_homestays_location (state, city),
   KEY idx_homestays_status (status),
-  CONSTRAINT chk_homestays_capacity CHECK (capacity > 0),
-  CONSTRAINT chk_homestays_price    CHECK (base_price > 0)
+  CONSTRAINT chk_homestays_capacity CHECK (capacity > 0),     -- CHECK 约束确保容量和价格大于 0
+  CONSTRAINT chk_homestays_price    CHECK (base_price > 0)  
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE homestay_images (
@@ -77,7 +77,7 @@ CREATE TABLE homestay_images (
     REFERENCES homestays (homestay_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Tags are a fixed vocabulary shared by: homestay filter, AI recommendation, AI description prompt
+-- Tags are a fixed vocabulary shared by: homestay filter, AI description prompt
 CREATE TABLE tags (
   tag_id    INT UNSIGNED NOT NULL AUTO_INCREMENT,
   tag_name  VARCHAR(30)  NOT NULL,
@@ -179,6 +179,27 @@ CREATE TABLE bookings (
   CONSTRAINT chk_bookings_total   CHECK (total_price >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Drafts are private to their customer and do not reserve availability.
+CREATE TABLE booking_drafts (
+  draft_id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id          INT UNSIGNED NOT NULL,
+  homestay_id      INT UNSIGNED NOT NULL,
+  check_in         DATE NULL,
+  check_out        DATE NULL,
+  guests           TINYINT UNSIGNED NOT NULL DEFAULT 2,
+  promo_code       VARCHAR(30) NULL,
+  special_requests VARCHAR(500) NULL,
+  estimated_total  DECIMAL(10,2) NOT NULL DEFAULT 0,
+  created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (draft_id),
+  KEY idx_drafts_user (user_id),
+  CONSTRAINT fk_drafts_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+  CONSTRAINT fk_drafts_homestay FOREIGN KEY (homestay_id) REFERENCES homestays (homestay_id) ON DELETE CASCADE,
+  CONSTRAINT chk_drafts_dates CHECK (check_out IS NULL OR check_in IS NULL OR check_out > check_in),
+  CONSTRAINT chk_drafts_total CHECK (estimated_total >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE blocked_dates (
   block_id     INT UNSIGNED NOT NULL AUTO_INCREMENT,
   homestay_id  INT UNSIGNED NOT NULL,
@@ -248,7 +269,7 @@ CREATE TABLE reviews (
   CONSTRAINT chk_reviews_rating CHECK (rating BETWEEN 1 AND 5)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Helper view: average rating per homestay (used by homestay list, AI recommendation, PDF report)
+-- Helper view: average rating per homestay (used by homestay list, PDF report)
 CREATE VIEW v_homestay_ratings AS
 SELECT b.homestay_id,
        ROUND(AVG(r.rating), 2) AS avg_rating,
